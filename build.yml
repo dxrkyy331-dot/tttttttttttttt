@@ -1,0 +1,64 @@
+name: build
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find the project folder
+        id: p
+        run: |
+          S=$(find . -name settings.gradle -not -path './.git/*' | head -1)
+          if [ -z "$S" ]; then
+            echo "settings.gradle was not found. Files in the repository:"
+            find . -not -path './.git/*' -type f | head -50
+            exit 1
+          fi
+          echo "dir=$(dirname "$S")" >> "$GITHUB_OUTPUT"
+          echo "Project folder: $(dirname "$S")"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.12
+
+      - name: Build the mod
+        working-directory: ${{ steps.p.outputs.dir }}
+        run: gradle build --stacktrace
+
+      - name: Show what is inside the jar
+        run: |
+          J=$(ls ${{ steps.p.outputs.dir }}/build/libs/*.jar | grep -v sources | head -1)
+          echo "Jar: $J"
+          sha256sum "$J"
+          unzip -l "$J"
+
+      - name: Keep the jar as a download in the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: target-hud-jar
+          path: |
+            ${{ steps.p.outputs.dir }}/build/libs/*.jar
+            !${{ steps.p.outputs.dir }}/build/libs/*-sources.jar
+
+      - name: Publish the jar under Releases
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build
+          files: |
+            ${{ steps.p.outputs.dir }}/build/libs/*.jar
+            !${{ steps.p.outputs.dir }}/build/libs/*-sources.jar
